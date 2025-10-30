@@ -1,0 +1,47 @@
+name: ClickUp Comment Sync
+
+on:
+  repository_dispatch: # This is the typical trigger, even if it requires a bridge
+    types: [new_clickup_comment]
+
+jobs:
+  sync_comment:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: npm install html-to-markdown-converter
+
+      - name: Extract and Convert Comment
+        id: convert
+        # Use JQ or a script to parse the JSON payload from the ClickUp webhook
+        # The comment text will be in the payload.history_items[0].data.comment.html
+        run: |
+          CLICKUP_PAYLOAD='${{ github.event.client_payload }}'
+          # A sample extraction logic (highly dependent on exact ClickUp payload structure)
+          HTML_COMMENT=$(echo "$CLICKUP_PAYLOAD" | jq -r '.history_items[0].data.comment.html')
+          MARKDOWN_COMMENT=$(echo "$HTML_COMMENT" | npx html-to-markdown-converter)
+          
+          # Extract the Issue/PR number (requires a convention in your task/comment, e.g., "GH-123")
+          ISSUE_NUMBER=$(echo "$MARKDOWN_COMMENT" | grep -oP 'GH-\K\d+' | head -1)
+
+          echo "markdown_comment=$MARKDOWN_COMMENT" >> $GITHUB_OUTPUT
+          echo "issue_number=$ISSUE_NUMBER" >> $GITHUB_OUTPUT
+
+      - name: Add Comment to GitHub Issue/PR
+        if: steps.convert.outputs.issue_number != ''
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const issueNumber = parseInt('${{ steps.convert.outputs.issue_number }}');
+            const commentBody = `**New Comment from ClickUp:**\n\n${{ steps.convert.outputs.markdown_comment }}`;
+            
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              body: commentBody
+            });
